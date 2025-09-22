@@ -4,12 +4,12 @@ import {
   Get,
   Post,
   Body,
-  Query,
   Headers,
   UseGuards,
+  Query,
 } from '@nestjs/common';
 import { ApiHeader, ApiTags, ApiOperation, ApiBody } from '@nestjs/swagger';
-import { FactureService } from './facture.service';
+import { FactureService, ParametreDto } from './facture.service';
 import { Facture } from './facture.entity';
 import { ListFacturesDto } from './dto/list-factures.dto';
 import { GetFeesDto } from './dto/get-fees.dto';
@@ -23,21 +23,33 @@ import { ListPaidInvoicesDto } from './dto/list-paid-invoices.dto';
 export class FactureController {
   constructor(private readonly factureService: FactureService) {}
 
-  @Get('facturiers-by-code-uo')
+  @Post('facturiers-by-code-uo')
   @UseGuards(ApiKeyHashGuard)
   @ApiHeader({ name: 'clientId', description: 'Merchant ID', required: true })
   @ApiHeader({ name: 'hashParam', description: 'SHA256 hash', required: true })
+  @Post('facturiers-by-code-uo')
+  @UseGuards(ApiKeyHashGuard)
   getFacturiersByCodeUo(
     @Query('codeUO') codeUO: string,
     @Query('sector') sector: string,
+    @Headers('clientId') clientId: string,
+    @Headers('hashParam') hashParam: string,
   ) {
-    return this.factureService.getFacturiersByCodeUo(codeUO, sector);
+    return this.factureService.getFacturiersByCodeUo(
+      codeUO,
+      sector,
+      clientId,
+      hashParam,
+    );
   }
 
   @Post('list')
   @UseGuards(ApiKeyHashGuard)
-  @ApiOperation({ summary: 'Retrieve factures by product and parameters' })
-  getListFactures(@Body() body: ListFacturesDto): Promise<Facture[]> {
+  getListFactures(
+    @Body() body: ListFacturesDto,
+    @Headers('clientId') clientId: string,
+    @Headers('hashParam') hashParam: string,
+  ): Promise<Facture[]> {
     const parameters = body.mparametre.map((p) => ({
       parameterCode: p.parameterCode,
       value: p.value,
@@ -48,8 +60,18 @@ export class FactureController {
 
   @Post('info-facture-external')
   @UseGuards(ApiKeyHashGuard)
-  infoFactureExternal(@Body() body: ListFacturesDto) {
-    return this.factureService.infoFactureExternal(body.idProduit);
+  infoFactureExternal(
+    @Body() body: ListFacturesDto,
+    @Headers('clientId') clientId: string,
+    @Headers('hashParam') hashParam: string,
+  ) {
+    const parameters: ParametreDto[] = body.mparametre.map((p) => ({
+      parameterCode: p.parameterCode,
+      value: p.value,
+      display: p.display,
+    }));
+
+    return this.factureService.infoFactureExternal(body.idProduit, parameters);
   }
 
   @Post('save')
