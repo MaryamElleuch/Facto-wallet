@@ -102,40 +102,6 @@ export class ApiKeyHashGuard implements CanActivate {
 
           break;
         }
-        case 'AIRTIME': {
-          const amountParam = body.mparametre?.find(
-            (p) => p.parameterCode === 'AMOUNT',
-          );
-          const phoneParam = body.mparametre?.find(
-            (p) => p.parameterCode === 'PHONE_NUMBER',
-          );
-          const countryParam = body.mparametre?.find(
-            (p) => p.parameterCode === 'COUNTRY_CODE',
-          );
-          const quantityParam = body.mparametre?.find(
-            (p) => p.parameterCode === 'QUANTITY',
-          );
-
-          if (!amountParam || !phoneParam || !countryParam || !quantityParam) {
-            throw new BadRequestException(
-              'Missing parameters for AIRTIME hash',
-            );
-          }
-
-          originalString =
-            String(countryParam.value) +
-            String(phoneParam.value) +
-            String(body.pvCode || '') +
-            String(amountParam.value) +
-            String(body.billerCode || '') +
-            String(body.productId || '') +
-            String(body.channel || '') +
-            String(body.serviceProviderCode || '') +
-            String(body.serviceType || '') +
-            merchant.clientSecret;
-
-          break;
-        }
 
         default:
           throw new BadRequestException(
@@ -162,8 +128,8 @@ export class ApiKeyHashGuard implements CanActivate {
         merchant.clientSecret;
     }
     // Cas INFO-FACTURE (idProduit + clientSecret) et cas listFactures
-    else if ('idProduit' in body) {
-      originalString = `${body.idProduit}${merchant.clientSecret}`;
+    else if ('productId' in body) {
+      originalString = `${body.productId}${merchant.clientSecret}`;
     } else {
       throw new BadRequestException(
         'Missing required fields for hash validation',

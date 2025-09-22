@@ -75,17 +75,33 @@ export class WalletService {
     }
     return account;
   }
+  private mapWalletParamsToExtraData(wallet: Wallet, operation?: Operation) {
+    let params: { codeParam: string; value?: string; display?: boolean }[] = [];
+
+    if (operation) {
+      params = operation.metadata?.params ?? [];
+    } else if (wallet.operations?.length) {
+      const lastOp = wallet.operations[wallet.operations.length - 1];
+      params = lastOp.metadata?.params ?? [];
+    }
+
+    return params.map((p) => ({
+      parameterCode: p.codeParam,
+      value: p.value ?? '',
+      display: p.display ? 1 : 0,
+    }));
+  }
 
   // =====================================================
   // ✅ BANK TO WALLET
   // =====================================================
   async bankToWallet(dto: BankToWalletDto, merchant: Merchant): Promise<any> {
     try {
-      const clientSecret = process.env.CLIENT_SECRET; // OK: process interne
+      const clientSecret = process.env.CLIENT_SECRET;
 
       const originalString =
         String(dto.countryCode ?? '') +
-        String(dto.phoneNumber ?? '') + // utilisé pour la signature (spec donnée)
+        String(dto.phoneNumber ?? '') +
         String(dto.codePv ?? '') +
         String(dto.amount ?? '') +
         String(dto.billerCode ?? '') +
@@ -99,13 +115,11 @@ export class WalletService {
 
       const hashParam = this.generateHash(originalString);
 
-      // On choisit msisdn s'il existe, sinon phoneNumber
       const msisdn = (dto.msisdn ?? dto.phoneNumber ?? '').trim();
       if (!msisdn) {
         throw new BadRequestException('MSISDN/phoneNumber is required');
       }
 
-      // Vérifier / créer le wallet
       let wallet = await this.walletRepo.findOne({
         where: { msisdn, merchant },
       });
@@ -119,11 +133,9 @@ export class WalletService {
         wallet = await this.walletRepo.save(wallet);
       }
 
-      // Update balance
       wallet.balance += Number(dto.amount ?? 0);
       wallet = await this.walletRepo.save(wallet);
 
-      // Log operation
       const operation = this.operationRepo.create({
         serviceType: 'BANK_TO_WALLET',
         metadata: { ...dto, hashParam },
@@ -131,27 +143,29 @@ export class WalletService {
       });
       await this.operationRepo.save(operation);
 
+      // ✅ définir la date/heure
+      const now = new Date();
+      const dateOperation = now.toLocaleDateString('fr-FR');
+      const heureOperation = now.toLocaleTimeString('fr-FR');
+
       return {
         code: '0',
         message: 'Bank to Wallet operation saved successfully',
-        tansactionId: String(operation.id),
+        tansactionId: String(Math.floor(Math.random() * 1_000_000)),
         extraData: [
-          { parameterCode: 'MSISDN', value: msisdn, display: 1 },
+          ...dto.parameters.map((p) => ({
+            parameterCode: p.parameterCode,
+            value: p.value,
+            display: 1,
+          })),
+          { parameterCode: 'MESSAGE', value: 'Success', display: 0 },
+          { parameterCode: 'DATEOPERATION', value: dateOperation, display: 1 },
           {
-            parameterCode: 'AMOUNT',
-            value: String(dto.amount ?? ''),
+            parameterCode: 'HEUREOPERATION',
+            value: heureOperation,
             display: 1,
           },
-          {
-            parameterCode: 'BILLREFERENCE',
-            value: String(dto.billReference ?? ''),
-            display: 1,
-          },
-          {
-            parameterCode: 'BALANCE',
-            value: wallet.balance.toString(),
-            display: 1,
-          },
+          { parameterCode: 'FRAIS', value: '0.0', display: 1 },
         ],
       };
     } catch (error) {
@@ -203,20 +217,30 @@ export class WalletService {
       });
       await this.operationRepo.save(operation);
 
-      // 6) Réponse standardisée
+      // 6) Définir la date et l’heure
+      const now = new Date();
+      const dateOperation = now.toLocaleDateString('fr-FR'); // ex: 21/09/2025
+      const heureOperation = now.toLocaleTimeString('fr-FR'); // ex: 16:33:21
+
+      // 7) Réponse standardisée enrichie
       return {
         code: '0',
         message: 'Wallet to Bank operation saved successfully',
-        tansactionId: String(operation.id),
+        tansactionId: String(Math.floor(Math.random() * 1_000_000)),
         extraData: [
-          { parameterCode: 'MSISDN', value: msisdn, display: 1 },
-          { parameterCode: 'ACCOUNTNUMBER', value: accountNumber, display: 1 },
-          { parameterCode: 'AMOUNT', value: String(amount), display: 1 },
+          ...dto.parameters.map((p) => ({
+            parameterCode: p.parameterCode,
+            value: p.value,
+            display: 1,
+          })),
+          { parameterCode: 'MESSAGE', value: 'Success', display: 0 },
+          { parameterCode: 'DATEOPERATION', value: dateOperation, display: 1 },
           {
-            parameterCode: 'BALANCE',
-            value: wallet.balance.toString(),
+            parameterCode: 'HEUREOPERATION',
+            value: heureOperation,
             display: 1,
           },
+          { parameterCode: 'FRAIS', value: '0.0', display: 1 },
         ],
       };
     } catch (error) {
@@ -347,24 +371,12 @@ export class WalletService {
         walletByAccount.product = product;
         await this.walletRepo.save(walletByAccount);
 
+        const extraData = this.mapWalletParamsToExtraData(walletByAccount); // <- utiliser walletByAccount
         return {
           code: '0',
           message: 'Wallet re-linked successfully',
           tansactionId: String(Math.floor(Math.random() * 1_000_000)),
-          extraData: [
-            { parameterCode: 'MSISDN', value: msisdn, display: 1 },
-            {
-              parameterCode: 'ACCOUNTNUMBER',
-              value: accountNumber,
-              display: 1,
-            },
-            {
-              parameterCode: 'PRODUCT_ID',
-              value: String(product.id),
-              display: 1,
-            },
-            { parameterCode: 'STATUS', value: 'ACTIVE', display: 1 },
-          ],
+          extraData,
         };
       }
 
@@ -393,15 +405,11 @@ export class WalletService {
         code: '0',
         message: 'Wallet linked and saved successfully',
         tansactionId: String(Math.floor(Math.random() * 1_000_000)),
-        extraData: [
-          { parameterCode: 'MSISDN', value: msisdn, display: 1 },
-          { parameterCode: 'ACCOUNTNUMBER', value: accountNumber, display: 1 },
-          {
-            parameterCode: 'PRODUCT_ID',
-            value: String(product.id),
-            display: 1,
-          },
-        ],
+        extraData: dto.parameters.map((p) => ({
+          parameterCode: p.parameterCode,
+          value: p.value,
+          display: p.display,
+        })),
       };
     } catch (error: any) {
       console.error('❌ Error in linkWallet:', error.message, error?.detail);
@@ -438,26 +446,22 @@ export class WalletService {
     if (!wallet) {
       throw new BadRequestException('Wallet not found');
     }
-
-    return [
-      { parameterCode: 'MSISDN', value: wallet.msisdn, display: 1 },
-      { parameterCode: 'STATUS', value: wallet.status, display: 1 },
-      {
-        parameterCode: 'BALANCE',
-        value: wallet.balance.toString(),
-        display: 1,
-      },
-      {
-        parameterCode: 'ACCOUNTNUMBER',
-        value: wallet.account?.accountNumber ?? '',
-        display: 1,
-      },
-    ];
+    return {
+      code: '0',
+      message: 'Info wallet ',
+      tansactionId: String(Math.floor(Math.random() * 1_000_000)),
+      extraData: dto.parameters.map((p) => ({
+        parameterCode: p.parameterCode,
+        value: p.value,
+        display: p.display,
+      })),
+    };
   }
 
   // =====================================================
   // ❌ UNLINK WALLET
   // =====================================================
+
   async unlinkWallet(
     dto: UnlinkWalletDto,
     merchant: Merchant,
@@ -477,28 +481,39 @@ export class WalletService {
     }
 
     if (wallet.status === WalletStatus.CLOSED) {
-      // Idempotent: déjà fermé
-      return {
-        code: '0',
-        message: 'Wallet already unlinked',
-        tansactionId: String(Math.floor(Math.random() * 1_000_000)),
-        extraData: [
-          { parameterCode: 'MSISDN', value: wallet.msisdn, display: 1 },
-          { parameterCode: 'STATUS', value: wallet.status, display: 1 },
-        ],
-      };
+      return this.buildResponse(dto, wallet, 'Wallet already closed');
     }
 
     wallet.status = WalletStatus.CLOSED;
     await this.walletRepo.save(wallet);
 
+    return this.buildResponse(dto, wallet, 'Operation effectue avec succes.');
+  }
+
+  // ✅ méthode utilitaire
+  private buildResponse(
+    dto: UnlinkWalletDto,
+    wallet: Wallet,
+    message: string,
+  ): GenericWalletResponse {
+    const now = new Date();
+    const dateOperation = now.toLocaleDateString('fr-FR'); // 07/11/2024
+    const heureOperation = now.toLocaleTimeString('fr-FR'); // 14:54:21
+
     return {
       code: '0',
-      message: 'Wallet unlinked successfully',
+      message,
       tansactionId: String(Math.floor(Math.random() * 1_000_000)),
       extraData: [
-        { parameterCode: 'MSISDN', value: wallet.msisdn, display: 1 },
-        { parameterCode: 'STATUS', value: wallet.status, display: 1 },
+        ...dto.listParam.map((p) => ({
+          parameterCode: p.parameterCode,
+          value: p.value,
+          display: 1,
+        })),
+        { parameterCode: 'MESSAGE', value: 'Success', display: 0 },
+        { parameterCode: 'DATEOPERATION', value: dateOperation, display: 1 },
+        { parameterCode: 'HEUREOPERATION', value: heureOperation, display: 1 },
+        { parameterCode: 'FRAIS', value: '0.0', display: 1 },
       ],
     };
   }

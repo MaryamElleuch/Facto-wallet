@@ -40,11 +40,22 @@ export class FactureService {
     private walletRepo: Repository<Wallet>,
   ) {}
 
-  async getFacturiersByCodeUo(codeUO: string, sector: string) {
-    const merchants = await this.merchantRepo.find({
-      relations: ['products'],
-    });
+  async getFacturiersByCodeUo(
+    codeUO: string,
+    sector: string,
+    clientId?: string,
+    hashParam?: string,
+  ) {
+    // Optionnel : log pour debug ou audit
+    console.log('Fetching facturiers by codeUO');
+    console.log('codeUO:', codeUO, 'sector:', sector);
+    if (clientId) console.log('clientId:', clientId);
+    if (hashParam) console.log('hashParam:', hashParam);
 
+    // Récupération des marchands et de leurs produits
+    const merchants = await this.merchantRepo.find({ relations: ['products'] });
+
+    // Transformation en structure attendue par le frontend ou l'API
     return merchants.map((m) => ({
       id: m.id.toString(),
       facturerName: m.name,
@@ -64,25 +75,23 @@ export class FactureService {
   async getListFactures(
     productId: number,
     parameters: ParametreDto[],
+    clientId?: string, // si tu veux filtrer par merchant
   ): Promise<Facture[]> {
-    const product = await this.productRepo.findOne({
-      where: { id: productId },
-    });
-    if (!product) {
-      throw new BadRequestException('Product not found');
-    }
-
-    const query = this.factureRepo
+    let query = this.factureRepo
       .createQueryBuilder('f')
-      .where('f.productId = :id', { id: productId });
+      .innerJoinAndSelect('f.product', 'p')
+      .innerJoinAndSelect('p.merchant', 'm');
+
+    if (productId) {
+      query = query.where('f.productId = :id', { id: productId });
+    } else if (clientId) {
+      query = query.where('m.name = :merchantName', { merchantName: clientId });
+    }
 
     if (parameters && parameters.length > 0) {
       parameters.forEach((p) => {
-        if (p.parameterCode === 'REFERENCE') {
-          query.andWhere('f.reference = :ref', { ref: p.value });
-        }
-        if (p.parameterCode === 'AMOUNT') {
-          query.andWhere('f.amount = :amt', { amt: p.value });
+        if (p.parameterCode === 'Name') {
+          query.andWhere('f.name = :ref', { name: p.value });
         }
       });
     }
@@ -90,20 +99,44 @@ export class FactureService {
     return query.getMany();
   }
 
-  async infoFactureExternal(productId: number) {
+  async infoFactureExternal(
+    productId: number,
+    parameters: ParametreDto[],
+  ): Promise<{ parameterCode: string; value: string; display: number }[]> {
     const product = await this.productRepo.findOne({
       where: { id: productId },
     });
-    if (!product) {
-      throw new BadRequestException('Product not found');
+    if (!product) throw new BadRequestException('Product not found');
+
+    const refParam = parameters.find((p) => p.parameterCode === 'REFERENCE');
+    let facture: Facture | null = null;
+
+    if (refParam && refParam.value) {
+      facture = await this.factureRepo
+        .createQueryBuilder('f')
+        .innerJoinAndSelect('f.product', 'p')
+        .where('f.reference = :ref', { ref: String(refParam.value).trim() })
+        .andWhere('p.id = :pid', { pid: productId })
+        .getOne();
     }
 
     return [
-      { parameterCode: 'NBRE', value: '1', display: 0 },
-      { parameterCode: 'REFERENCE', value: '', display: 0 },
+      { parameterCode: 'NBRE', value: facture ? '1' : '0', display: 0 },
+      {
+        parameterCode: 'REFERENCE',
+        value: facture ? facture.reference : '',
+        display: 0,
+      },
       {
         parameterCode: 'AMOUNT',
-        value: product.fixedAmount || 0,
+        value: facture
+          ? facture.amount.toFixed(2)
+          : (product.fixedAmount || 0).toFixed(2),
+        display: 0,
+      },
+      {
+        parameterCode: 'STATUS',
+        value: facture ? facture.status : '',
         display: 0,
       },
     ];
